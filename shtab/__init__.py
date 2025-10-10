@@ -17,6 +17,7 @@ from argparse import (
 from collections import defaultdict
 from functools import total_ordering
 from itertools import starmap
+from shlex import join, quote
 from string import Template
 from typing import Any, Dict, List
 from typing import Optional as Opt
@@ -187,7 +188,7 @@ def get_bash_commands(root_parser, root_prefix, choice_functions=None):
             if hasattr(positional, "complete"):
                 # shtab `.complete = ...` functions
                 comp_pattern = complete2pattern(positional.complete, "bash", choice_type2fn)
-                compgens.append(f"{prefix}_pos_{i}_COMPGEN={comp_pattern}")
+                compgens.append(f"{prefix}_pos_{i}_COMPGEN={quote(comp_pattern)}")
 
             if positional.choices:
                 # choices (including subparsers & shtab `.complete` functions)
@@ -199,7 +200,8 @@ def get_bash_commands(root_parser, root_prefix, choice_functions=None):
                         # append special completion type to `compgens`
                         # NOTE: overrides `.complete` attribute
                         log.debug(f"Choice.{choice.type}:{prefix}:{positional.dest}")
-                        compgens.append(f"{prefix}_pos_{i}_COMPGEN={choice_type2fn[choice.type]}")
+                        compgens.append(f"{prefix}_pos_{i}_COMPGEN="
+                                        f"{quote(choice_type2fn[choice.type])}")
                     elif isinstance(positional.choices, dict):
                         # subparser, so append to list of subparsers & recurse
                         log.debug("subcommand:%s", choice)
@@ -229,21 +231,18 @@ def get_bash_commands(root_parser, root_prefix, choice_functions=None):
                         this_positional_choices.append(str(choice))
 
                 if this_positional_choices:
-                    choices_str = "' '".join(this_positional_choices)
-                    choices.append(f"{prefix}_pos_{i}_choices=('{choices_str}')")
+                    choices.append(f"{prefix}_pos_{i}_choices=({join(this_positional_choices)})")
 
             # skip default `nargs` values
             if positional.nargs not in (None, "1", "?"):
-                nargs.append(f"{prefix}_pos_{i}_nargs={positional.nargs}")
+                nargs.append(f"{prefix}_pos_{i}_nargs={quote(str(positional.nargs))}")
 
         if discovered_subparsers:
-            subparsers_str = "' '".join(discovered_subparsers)
-            subparsers.append(f"{prefix}_subparsers=('{subparsers_str}')")
+            subparsers.append(f"{prefix}_subparsers=({join(discovered_subparsers)})")
             log.debug(f"subcommands:{prefix}:{discovered_subparsers}")
 
         # optional arguments
-        options_strings_str = "' '".join(get_option_strings(parser))
-        option_strings.append(f"{prefix}_option_strings=('{options_strings_str}')")
+        option_strings.append(f"{prefix}_option_strings=({join(get_option_strings(parser))})")
         for optional in parser._get_optional_actions():
             if optional == SUPPRESS:
                 continue
@@ -252,8 +251,8 @@ def get_bash_commands(root_parser, root_prefix, choice_functions=None):
                 if hasattr(optional, "complete"):
                     # shtab `.complete = ...` functions
                     comp_pattern_str = complete2pattern(optional.complete, "bash", choice_type2fn)
-                    compgens.append(
-                        f"{prefix}_{wordify(option_string)}_COMPGEN={comp_pattern_str}")
+                    compgens.append(f"{prefix}_{wordify(option_string)}_COMPGEN="
+                                    f"{join(comp_pattern_str)}")
 
                 if optional.choices:
                     # choices (including shtab `.complete` functions)
@@ -264,20 +263,20 @@ def get_bash_commands(root_parser, root_prefix, choice_functions=None):
                         if isinstance(choice, Choice):
                             log.debug(f"Choice.{choice.type}:{prefix}:{optional.dest}")
                             func_str = choice_type2fn[choice.type]
-                            compgens.append(
-                                f"{prefix}_{wordify(option_string)}_COMPGEN={func_str}")
+                            compgens.append(f"{prefix}_{wordify(option_string)}_COMPGEN="
+                                            f"{quote(func_str)}")
                         else:
                             # simple choice
                             this_optional_choices.append(str(choice))
 
                     if this_optional_choices:
-                        this_choices_str = "' '".join(this_optional_choices)
-                        choices.append(
-                            f"{prefix}_{wordify(option_string)}_choices=('{this_choices_str}')")
+                        choices.append(f"{prefix}_{wordify(option_string)}_choices="
+                                       f"({join(this_optional_choices)})")
 
                 # Check for nargs.
                 if optional.nargs is not None and optional.nargs != 1:
-                    nargs.append(f"{prefix}_{wordify(option_string)}_nargs={optional.nargs}")
+                    nargs.append(f"{prefix}_{wordify(option_string)}_nargs="
+                                 f"{quote(str(optional.nargs))}")
 
         # append recursion results
         subparsers.extend(sub_subparsers)
@@ -468,11 +467,6 @@ complete -o filenames -F ${root_prefix} ${prog}""").safe_substitute(
     )
 
 
-def escape_zsh(string):
-    # excessive but safe
-    return re.sub(r"([^\w\s.,()-])", r"\\\1", str(string))
-
-
 @mark_completer("zsh")
 def complete_zsh(parser, root_prefix=None, preamble="", choice_functions=None):
     """
@@ -500,7 +494,7 @@ def complete_zsh(parser, root_prefix=None, preamble="", choice_functions=None):
                 nargs=('"(- : *)"' if is_opt_end(opt) else '"*"' if is_opt_multiline(opt) else ""),
                 options=("{{{}}}".format(",".join(opt.option_strings)) if len(opt.option_strings)
                          > 1 else '"{}"'.format("".join(opt.option_strings))),
-                help=escape_zsh(get_help(opt) if opt.help else ""),
+                help=quote(get_help(opt) if opt.help else ""),
                 dest=opt.dest,
                 pattern=complete2pattern(opt.complete, "zsh", choice_type2fn) if hasattr(
                     opt, "complete") else
@@ -512,7 +506,7 @@ def complete_zsh(parser, root_prefix=None, preamble="", choice_functions=None):
         get_help = parser._get_formatter()._expand_help
         return '"{nargs}:{help}:{pattern}"'.format(
             nargs={ONE_OR_MORE: "(*)", ZERO_OR_MORE: "(*):", REMAINDER: "(-)*"}.get(opt.nargs, ""),
-            help=escape_zsh((get_help(opt) if opt.help else opt.dest).strip().split("\n")[0]),
+            help=quote((get_help(opt) if opt.help else opt.dest).strip().split("\n")[0]),
             pattern=complete2pattern(opt.complete, "zsh", choice_type2fn) if hasattr(
                 opt, "complete") else
             (choice_type2fn[opt.choices[0].type] if isinstance(opt.choices[0], Choice) else
@@ -644,7 +638,7 @@ curcontext="$curcontext" one_or_more='(*)' remainder='(-)*' default='*::: :->{na
 
     def command_list(prefix, options):
         name = " ".join([prog, *options["paths"]])
-        commands = "\n    ".join(f'"{escape_zsh(cmd)}:{escape_zsh(opt["help"])}"'
+        commands = "\n    ".join(f'{quote(cmd)}:{quote(opt["help"])}'
                                  for cmd, opt in sorted(options["commands"].items()))
         return f"""
 {prefix}_commands() {{
@@ -768,8 +762,7 @@ def complete_tcsh(parser, root_prefix=None, preamble="", choice_functions=None):
             for nn, arg in ndict.items():
                 if arg.choices:
                     checks = [f'[ "$cmd[{iidx}]" == "{n}" ]' for iidx, n in enumerate(nn, start=2)]
-                    choices_str = "' '".join(arg.choices)
-                    checks_str = ' && '.join(checks + [f"echo '{choices_str}'"])
+                    checks_str = ' && '.join(checks + [f"echo {join(arg.choices)}"])
                     nlist.append(f"( {checks_str} || false )")
             # Ugly hack
             nlist_str = ' || '.join(nlist)
